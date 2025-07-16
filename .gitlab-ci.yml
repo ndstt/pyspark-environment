@@ -1,0 +1,31 @@
+stages:
+  - build
+  - test
+
+build-image:
+  stage: build
+  variables:
+    GODEBUG: "http2client=0"  #Workaround for https://github.com/GoogleContainerTools/kaniko/issues/2751
+  image:
+    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    entrypoint: [ "" ]
+  script:
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${CI_REGISTRY_IMAGE}:${DOCKER_IMAGE_TAG}"
+      --compressed-caching=false    # workaround oom large image https://github.com/GoogleContainerTools/kaniko/issues/1680, https://github.com/GoogleContainerTools/kaniko/pull/1722
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        DOCKER_IMAGE_TAG: "MR_${CI_MERGE_REQUEST_IID}"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        DOCKER_IMAGE_TAG: "BRANCH_${CI_COMMIT_BRANCH}_${CI_COMMIT_SHORT_SHA}"
+    - when: never
+
+sast:
+  stage: test
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml

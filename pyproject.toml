@@ -1,0 +1,12 @@
+[project]
+name = "pyspark-environment"
+version = "0.1.0"
+description = ""
+requires-python = "==3.10.*"
+dependencies = [
+    "delta-spark==2.4.0",
+    "pyspark==3.4.0",
+    "jupyter==1.0.0"
+]
+[tool.poetry]
+package-mode = false

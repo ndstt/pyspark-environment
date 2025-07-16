@@ -1,0 +1,9 @@
+.venv/
+.venv
+
+.gitignore
+.gitlab-ci.yml
+Dockerfile
+README.md
+
+/deployment_conf
