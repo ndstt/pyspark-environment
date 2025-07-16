@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spark-jupyter-conf-${NAME}
+  namespace: data-pipelines
+data:
+  spark-defaults.conf: |
+    spark.app.name	jupyter-notebook-${NAME}
+    spark.master  k8s://https://kubernetes.default.svc:443
+    spark.submit.deployMode	client
+    spark.blockManager.port=8000
+    spark.kubernetes.namespace=${NAMESPACE}
+    spark.kubernetes.executor.podNamePrefix=jupyter-notebook-${NAME}-executor
+    spark.kubernetes.executor.podTemplateFile=s3a://prototyping-onelink-data-warehouse/static/executor-pod-template.yaml
+    spark.kubernetes.authenticate.driver.serviceAccountName=spark-application
+    spark.kubernetes.driver.pod.name=${POD_NAME}
+    spark.driver.bindAddress=0.0.0.0
+    spark.driver.host=jupyter-notebook-${NAME}.${NAMESPACE}.svc.cluster.local
+    spark.driver.port=4000
+    spark.driver.memory=1500m
+    spark.driver.memoryOverhead=500m
+    spark.kubernetes.executor.container.image=registry.gitlab.com/onelink-big-data-infrastructure/dev-ops/pyspark-environment:BRANCH_main_9cebbdf1
+    spark.kubernetes.executor.request.cores=300m
+    spark.kubernetes.executor.limits.cores=300m
+    spark.executor.instances=2
+    spark.executor.cores=1
+    spark.executor.memory=600m
+    spark.executor.memoryOverhead=500m
+    spark.executorEnv.AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    spark.executorEnv.AWS_SECRET_ACCESS_KEY=${AWS_SECRET_KEY}
+    spark.sql.session.timeZone	UTC
+    spark.sql.extensions	io.delta.sql.DeltaSparkSessionExtension
+    spark.sql.catalog.spark_catalog	org.apache.spark.sql.delta.catalog.DeltaCatalog
+  jupyter_notebook_config.py: |
+    c.NotebookApp.ip = '0.0.0.0'
+    c.NotebookApp.port = 8888
+    c.NotebookApp.open_browser = False
+    c.NotebookApp.token = ''
+    c.NotebookApp.password = ''
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter-notebook-${NAME}
+  namespace: data-pipelines
+spec:
+  type: ClusterIP
+  selector:
+    app: jupyter-notebook-${NAME}
+  ports:
+    - name: notebook
+      port: 8888
+      targetPort: 8888
+    - name: spark-ui
+      port: 4040
+      targetPort: 4040
+    - name: spark-driver
+      port: 4000
+      targetPort: 4000
+    - name: blockmanager
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jupyter-notebook-${NAME}
+  namespace: data-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyter-notebook-${NAME}
+  template:
+    metadata:
+      labels:
+        app: jupyter-notebook-${NAME}
+    spec:
+      serviceAccountName: spark-application
+      containers:
+        - name: jupyter
+          image: registry.gitlab.com/onelink-big-data-infrastructure/dev-ops/pyspark-environment:BRANCH_main_9cebbdf1
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              memory: "1500Mi"
+              cpu: "500m"
+            limits:
+              memory: "2000Mi"
+              cpu: "500m"
+          args:
+          - sh
+          - -c
+          - |
+            export NAME=ndstt # Change this env variable by yourself to get unique pod name to avoid pod name collision
+            envsubst '${POD_NAME} ${NAMESPACE} ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_KEY} ${NAME}' < /opt/spark/conf/spark-defaults.conf > /tmp/spark-defaults.conf && \
+            export SPARK_CONF_DIR=/tmp && \
+            /opt/spark/work-dir/.venv/bin/jupyter notebook --ip=0.0.0.0 --no-browser --allow-root --NotebookApp.token=''
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-access-key
+                  key: username
+            - name: AWS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-access-key
+                  key: password
+            - name: PYSPARK_PYTHON
+              value: /opt/spark/work-dir/.venv/bin/python
+            - name: SPARK_CONF_DIR
+              value: /tmp
+          volumeMounts:
+            - name: spark-jupyter-conf-${NAME}
+              mountPath: /opt/spark/conf/spark-defaults.conf
+              subPath: spark-defaults.conf
+            - name: spark-jupyter-conf-${NAME}
+              mountPath: /root/.jupyter/jupyter_notebook_config.py
+              subPath: jupyter_notebook_config.py
+      volumes:
+        - name: spark-jupyter-conf-${NAME}
+          configMap:
+            name: spark-jupyter-conf-${NAME}
